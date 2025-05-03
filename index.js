@@ -2,7 +2,7 @@
 const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
-const bodyParser = require('body-parser'); // Keep the import, though we comment out its use
+const bodyParser = require('body-parser'); // Use explicit body-parser
 // const fs = require('fs');
 // const path = require('path');
 
@@ -16,7 +16,8 @@ try {
         console.log("Loaded Firebase service account from environment variable.");
     } else {
         console.warn("FIREBASE_SERVICE_ACCOUNT_JSON env var not found. Trying local key file (FOR DEV ONLY)...");
-        serviceAccount = require('/home/lea/Insync/naszhu@gmail.com/Google Drive/shulai@iu.edu 2022-09-04 14:28/IUB/ctx-e3-0c2d428f6ca9.json'); // <<<--- ADJUST FOR LOCAL DEV if needed
+        // Ensure this path is correct for your local setup if needed
+        serviceAccount = require('/home/lea/Insync/naszhu@gmail.com/Google Drive/shulai@iu.edu 2022-09-04 14:28/IUB/ctx-e3-0c2d428f6ca9.json');
         console.log("Loaded Firebase service account from local file.");
     }
 } catch (error) {
@@ -44,6 +45,7 @@ const db = admin.firestore();
 
 
 // --- Firestore Configuration for FINAL data ---
+// *** VERIFY THESE NAMES ARE CORRECT ***
 const FINAL_DATA_COLLECTION = 'participants_finished'; // Or 'participants_final_data'
 const FINAL_DATA_SUBCOLLECTION = 'final_trials';   // Or 'trials'
 
@@ -53,79 +55,44 @@ const app = express();
 // --- Middleware ---
 app.use(cors()); // Enable CORS - Should be high up
 
-// *** TEMPORARILY COMMENTED OUT bodyParser.json() FOR DEBUGGING ***
-app.use(bodyParser.json({ limit: '50mb' }));
+// *** REVERTED: Use bodyParser.json() to parse incoming JSON ***
+app.use(bodyParser.json({ limit: '50mb' })); // Increase limit for large datasets
 
-// *** UNCOMMENTED Raw Body Logger (for debugging JSON errors) ***
-// This will intercept the request BEFORE the route handler if body parsing fails
-// app.use((req, res, next) => {
-//     // Only log for the specific route and method we are debugging
-//     if (req.originalUrl === '/save-final-data' && req.method === 'POST') {
-//         let rawData = '';
-//         req.setEncoding('utf8');
-//         req.on('data', function(chunk) {
-//            rawData += chunk;
-//         });
-//         req.on('end', function() {
-//             console.log("------ RAW BODY RECEIVED (/save-final-data) ------");
-//             // Log the first 500 characters to see the structure
-//             console.log(rawData.substring(0, 500) + (rawData.length > 500 ? '...' : ''));
-//             console.log("------ END RAW BODY ------");
-//             // Store the raw data on the request object so the route handler can try parsing it
-//             // NOTE: This bypasses the standard body-parser middleware!
-//             req.rawBody = rawData;
-//             next(); // Continue to the actual route handler
-//         });
-//         // Handle potential errors reading the stream
-//         req.on('error', (err) => {
-//              console.error("Error reading request stream:", err);
-//              next(err); // Pass error to Express error handler
-//         });
-//     } else {
-//         // If not the target route/method, just continue
-//         next();
-//     }
-// });
-// --- End Raw Body Logger ---
-
+// *** REMOVED: Raw Body Logger is no longer needed ***
+// app.use((req, res, next) => { ... }); // Raw body logger removed
 
 // --- Routes ---
 
-// --- Route for Saving Final Data to Firestore (MODIFIED TO PARSE RAW BODY) ---
+// --- Route for Saving Final Data to Firestore ---
 app.post('/save-final-data', async (req, res) => {
     console.log("Received request at /save-final-data");
 
-    // *** ADDED: Attempt to parse the raw body collected by the logger middleware ***
-    let parsedBody;
-    if (req.rawBody) {
-        try {
-            parsedBody = JSON.parse(req.rawBody);
-            console.log("Successfully parsed rawBody manually.");
-            console.log("Parsed req.body type:", typeof parsedBody);
-             if (typeof parsedBody === 'object' && parsedBody !== null) {
-                console.log("First few keys in parsed body:", Object.keys(parsedBody).slice(0, 5));
-            }
-        } catch (parseError) {
-            console.error("Error manually parsing rawBody:", parseError);
-            // Log the raw body again on error for inspection
-            console.error("Raw body that failed parsing:", req.rawBody.substring(0, 500) + (req.rawBody.length > 500 ? '...' : ''));
-            return res.status(400).send({ message: 'Bad Request: Invalid JSON format received.', error: parseError.message });
+    // Log the received body AFTER parsing by bodyParser
+    console.log("Parsed req.body type:", typeof req.body);
+    if (typeof req.body === 'object' && req.body !== null) {
+        // Log carefully - avoid logging huge amounts of data if possible
+        console.log("Keys in req.body:", Object.keys(req.body));
+        if (req.body.participantId) {
+            console.log("Received participantId:", req.body.participantId);
+        }
+        if (Array.isArray(req.body.allTrialData)) {
+            console.log("Received allTrialData array with length:", req.body.allTrialData.length);
+        } else {
+             console.log("Received allTrialData is NOT an array.");
         }
     } else {
-        // This case shouldn't happen if the logger middleware worked, but good to have a fallback
-        console.error("Error: req.rawBody is missing. Body parser might be interfering or request was empty.");
-         return res.status(400).send({ message: 'Bad Request: Request body missing or processing error.' });
+        console.log("req.body is not an object or is null after parsing.");
+        // If body is empty/wrong type after parsing, send error immediately
+         return res.status(400).send({ message: 'Bad Request: Expected JSON body not found or invalid.' });
     }
-    // *** End Added Parsing Logic ***
 
+    // 1. Extract data from the parsed body
+    const { participantId, allTrialData } = req.body; // Use req.body directly
 
-    // 1. Extract data from the MANUALLY PARSED body
-    const { participantId, allTrialData } = parsedBody; // Use parsedBody instead of req.body
-
-    // 2. Basic validation
+    // 2. Basic validation (redundant if check above is done, but safe)
     if (!participantId || !Array.isArray(allTrialData) || allTrialData.length === 0) {
-        console.error("Invalid data after manual parsing:", { participantId, trialDataLength: allTrialData?.length });
-        return res.status(400).send({ message: 'Bad Request: Missing participantId or allTrialData array after parsing.' });
+        console.error("Invalid data structure after parsing:", { participantId, trialDataLength: allTrialData?.length });
+        return res.status(400).send({ message: 'Bad Request: Missing participantId or valid allTrialData array after parsing.' });
     }
 
     console.log(`Processing FINAL data for participant: ${participantId}. Total trials received: ${allTrialData.length}`);
@@ -194,7 +161,7 @@ app.post('/save-final-data', async (req, res) => {
         res.status(500).send({ message: 'Internal Server Error: Failed to save final data.', error: error.message });
     }
 });
-// --- End Modified Route ---
+// --- End Route ---
 
 
 // Existing simple GET route
