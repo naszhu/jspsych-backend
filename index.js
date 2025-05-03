@@ -16,7 +16,7 @@ try {
         console.log("Loaded Firebase service account from environment variable.");
     } else {
         console.warn("FIREBASE_SERVICE_ACCOUNT_JSON env var not found. Trying local key file (FOR DEV ONLY)...");
-        serviceAccount = require('./secrets/your-key-file-name.json'); // <<<--- ADJUST FOR LOCAL DEV if needed
+        serviceAccount = require('/home/lea/Insync/naszhu@gmail.com/Google Drive/shulai@iu.edu 2022-09-04 14:28/IUB/ctx-e3-0c2d428f6ca9.json'); // <<<--- ADJUST FOR LOCAL DEV if needed
         console.log("Loaded Firebase service account from local file.");
     }
 } catch (error) {
