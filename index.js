@@ -1,6 +1,6 @@
 // Import necessary modules
 const express = require('express');
-const cors = require('cors');
+// const cors = require('cors');
 const admin = require('firebase-admin');
 const bodyParser = require('body-parser'); // Use explicit body-parser
 // const fs = require('fs');
