@@ -51,9 +51,18 @@ const FINAL_DATA_SUBCOLLECTION = 'final_trials';   // Or 'trials'
 
 // Initialize Express app
 const app = express();
+const cors = require('cors');
 
+// allow your localhost experiment page to talk to this API
+app.use(cors({
+  origin: 'http://localhost:8080',
+  methods: ['GET','POST','OPTIONS'],
+  allowedHeaders: ['Content-Type']
+}));
+// make sure OPTIONS preflight is handled
+app.options('*', cors());
 // --- Middleware ---
-app.use(cors()); // Enable CORS - Should be high up
+// app.use(cors()); // Enable CORS - Should be high up
 
 // *** REVERTED: Use bodyParser.json() to parse incoming JSON ***
 app.use(bodyParser.json({ limit: '50mb' })); // Increase limit for large datasets
