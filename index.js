@@ -54,38 +54,38 @@ const app = express();
 app.use(cors()); // Enable CORS - Should be high up
 
 // *** TEMPORARILY COMMENTED OUT bodyParser.json() FOR DEBUGGING ***
-// app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.json({ limit: '50mb' }));
 
 // *** UNCOMMENTED Raw Body Logger (for debugging JSON errors) ***
 // This will intercept the request BEFORE the route handler if body parsing fails
-app.use((req, res, next) => {
-    // Only log for the specific route and method we are debugging
-    if (req.originalUrl === '/save-final-data' && req.method === 'POST') {
-        let rawData = '';
-        req.setEncoding('utf8');
-        req.on('data', function(chunk) {
-           rawData += chunk;
-        });
-        req.on('end', function() {
-            console.log("------ RAW BODY RECEIVED (/save-final-data) ------");
-            // Log the first 500 characters to see the structure
-            console.log(rawData.substring(0, 500) + (rawData.length > 500 ? '...' : ''));
-            console.log("------ END RAW BODY ------");
-            // Store the raw data on the request object so the route handler can try parsing it
-            // NOTE: This bypasses the standard body-parser middleware!
-            req.rawBody = rawData;
-            next(); // Continue to the actual route handler
-        });
-        // Handle potential errors reading the stream
-        req.on('error', (err) => {
-             console.error("Error reading request stream:", err);
-             next(err); // Pass error to Express error handler
-        });
-    } else {
-        // If not the target route/method, just continue
-        next();
-    }
-});
+// app.use((req, res, next) => {
+//     // Only log for the specific route and method we are debugging
+//     if (req.originalUrl === '/save-final-data' && req.method === 'POST') {
+//         let rawData = '';
+//         req.setEncoding('utf8');
+//         req.on('data', function(chunk) {
+//            rawData += chunk;
+//         });
+//         req.on('end', function() {
+//             console.log("------ RAW BODY RECEIVED (/save-final-data) ------");
+//             // Log the first 500 characters to see the structure
+//             console.log(rawData.substring(0, 500) + (rawData.length > 500 ? '...' : ''));
+//             console.log("------ END RAW BODY ------");
+//             // Store the raw data on the request object so the route handler can try parsing it
+//             // NOTE: This bypasses the standard body-parser middleware!
+//             req.rawBody = rawData;
+//             next(); // Continue to the actual route handler
+//         });
+//         // Handle potential errors reading the stream
+//         req.on('error', (err) => {
+//              console.error("Error reading request stream:", err);
+//              next(err); // Pass error to Express error handler
+//         });
+//     } else {
+//         // If not the target route/method, just continue
+//         next();
+//     }
+// });
 // --- End Raw Body Logger ---
 
 
