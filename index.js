@@ -2,7 +2,7 @@
 const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
-const bodyParser = require('body-parser'); // *** ADDED: Explicit body-parser ***
+const bodyParser = require('body-parser'); // Keep the import, though we comment out its use
 // const fs = require('fs');
 // const path = require('path');
 
@@ -53,62 +53,84 @@ const app = express();
 // --- Middleware ---
 app.use(cors()); // Enable CORS - Should be high up
 
-// *** CHANGED: Use bodyParser.json() instead of express.json() ***
-app.use(bodyParser.json({ limit: '50mb' })); // Increase limit for large datasets
+// *** TEMPORARILY COMMENTED OUT bodyParser.json() FOR DEBUGGING ***
+// app.use(bodyParser.json({ limit: '50mb' }));
 
-// *** ADDED: Optional Raw Body Logger (for debugging if JSON error persists) ***
-/* // Uncomment this block temporarily if JSON errors continue, to see the raw body
+// *** UNCOMMENTED Raw Body Logger (for debugging JSON errors) ***
+// This will intercept the request BEFORE the route handler if body parsing fails
 app.use((req, res, next) => {
+    // Only log for the specific route and method we are debugging
     if (req.originalUrl === '/save-final-data' && req.method === 'POST') {
-        let data = '';
+        let rawData = '';
         req.setEncoding('utf8');
         req.on('data', function(chunk) {
-           data += chunk;
+           rawData += chunk;
         });
         req.on('end', function() {
             console.log("------ RAW BODY RECEIVED (/save-final-data) ------");
-            console.log(data.substring(0, 500) + (data.length > 500 ? '...' : '')); // Log first 500 chars
+            // Log the first 500 characters to see the structure
+            console.log(rawData.substring(0, 500) + (rawData.length > 500 ? '...' : ''));
             console.log("------ END RAW BODY ------");
-            // We are NOT calling next() here in this temporary logger
-            // as body-parser needs the original stream.
-            // This is just for seeing what arrives if parsing fails.
-            // REMEMBER TO COMMENT THIS OUT AGAIN AFTER DEBUGGING.
+            // Store the raw data on the request object so the route handler can try parsing it
+            // NOTE: This bypasses the standard body-parser middleware!
+            req.rawBody = rawData;
+            next(); // Continue to the actual route handler
         });
+        // Handle potential errors reading the stream
+        req.on('error', (err) => {
+             console.error("Error reading request stream:", err);
+             next(err); // Pass error to Express error handler
+        });
+    } else {
+        // If not the target route/method, just continue
+        next();
     }
-    // IMPORTANT: If using the raw body logger above, you might need to call next()
-    // if you intend for the actual route handler to still process the request,
-    // BUT body-parser might complain if the stream was already consumed.
-    // It's best used *instead* of body-parser temporarily for inspection.
-    next(); // Call next() if NOT using the temporary logger above
 });
-*/
+// --- End Raw Body Logger ---
+
 
 // --- Routes ---
 
-// --- ADDED: New Route for Saving Final Data to Firestore ---
+// --- Route for Saving Final Data to Firestore (MODIFIED TO PARSE RAW BODY) ---
 app.post('/save-final-data', async (req, res) => {
     console.log("Received request at /save-final-data");
-    // *** ADDED: Log to confirm body was parsed (or if it's empty) ***
-    console.log("Parsed req.body type:", typeof req.body);
-    if (typeof req.body === 'object' && req.body !== null) {
-        console.log("First few keys in req.body:", Object.keys(req.body).slice(0, 5));
-    } else {
-        console.log("req.body is not an object or is null.");
-    }
-    // *** End Added Log ***
 
-    // 1. Extract data from request body
-    const { participantId, allTrialData } = req.body; // Expecting JSON payload
+    // *** ADDED: Attempt to parse the raw body collected by the logger middleware ***
+    let parsedBody;
+    if (req.rawBody) {
+        try {
+            parsedBody = JSON.parse(req.rawBody);
+            console.log("Successfully parsed rawBody manually.");
+            console.log("Parsed req.body type:", typeof parsedBody);
+             if (typeof parsedBody === 'object' && parsedBody !== null) {
+                console.log("First few keys in parsed body:", Object.keys(parsedBody).slice(0, 5));
+            }
+        } catch (parseError) {
+            console.error("Error manually parsing rawBody:", parseError);
+            // Log the raw body again on error for inspection
+            console.error("Raw body that failed parsing:", req.rawBody.substring(0, 500) + (req.rawBody.length > 500 ? '...' : ''));
+            return res.status(400).send({ message: 'Bad Request: Invalid JSON format received.', error: parseError.message });
+        }
+    } else {
+        // This case shouldn't happen if the logger middleware worked, but good to have a fallback
+        console.error("Error: req.rawBody is missing. Body parser might be interfering or request was empty.");
+         return res.status(400).send({ message: 'Bad Request: Request body missing or processing error.' });
+    }
+    // *** End Added Parsing Logic ***
+
+
+    // 1. Extract data from the MANUALLY PARSED body
+    const { participantId, allTrialData } = parsedBody; // Use parsedBody instead of req.body
 
     // 2. Basic validation
     if (!participantId || !Array.isArray(allTrialData) || allTrialData.length === 0) {
-        console.error("Invalid data received for final save:", { participantId, trialDataLength: allTrialData?.length });
-        return res.status(400).send({ message: 'Bad Request: Missing participantId or allTrialData array.' });
+        console.error("Invalid data after manual parsing:", { participantId, trialDataLength: allTrialData?.length });
+        return res.status(400).send({ message: 'Bad Request: Missing participantId or allTrialData array after parsing.' });
     }
 
     console.log(`Processing FINAL data for participant: ${participantId}. Total trials received: ${allTrialData.length}`);
 
-    // 3. Prepare for Batched Writes to the FINAL Firestore location
+    // 3. Prepare for Batched Writes (Logic remains the same)
     const maxBatchSize = 500;
     let batch = db.batch();
     let operationCount = 0;
@@ -151,7 +173,7 @@ app.post('/save-final-data', async (req, res) => {
 
         console.log(`Successfully committed ${batchesCommitted} FINAL batches for ${trialsPreparedCount} trials for participant ${participantId}.`);
 
-        // 4. Optional: Update parent document in FINAL collection
+        // 4. Optional: Update parent document in FINAL collection (Logic remains the same)
         try {
             const finalParentDocRef = db.collection(FINAL_DATA_COLLECTION).doc(participantId);
             await finalParentDocRef.set({
@@ -172,7 +194,7 @@ app.post('/save-final-data', async (req, res) => {
         res.status(500).send({ message: 'Internal Server Error: Failed to save final data.', error: error.message });
     }
 });
-// --- End Added Route ---
+// --- End Modified Route ---
 
 
 // Existing simple GET route
