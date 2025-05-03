@@ -1,9 +1,10 @@
 // Import necessary modules
 const express = require('express');
 const cors = require('cors');
-const admin = require('firebase-admin'); // *** ADDED: Firebase Admin SDK ***
-// const fs = require('fs'); // Keep if you still use file system elsewhere
-// const path = require('path'); // Keep if you still use file system elsewhere
+const admin = require('firebase-admin');
+const bodyParser = require('body-parser'); // *** ADDED: Explicit body-parser ***
+// const fs = require('fs');
+// const path = require('path');
 
 // --- Firebase Admin SDK Initialization ---
 // IMPORTANT: Load Firebase Admin SDK credentials securely!
@@ -14,20 +15,17 @@ try {
         serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
         console.log("Loaded Firebase service account from environment variable.");
     } else {
-        // Fallback for local development (requires ./secrets/your-key-file.json)
-        // Make sure './secrets' is in .gitignore if you use this locally!
         console.warn("FIREBASE_SERVICE_ACCOUNT_JSON env var not found. Trying local key file (FOR DEV ONLY)...");
         serviceAccount = require('./secrets/your-key-file-name.json'); // <<<--- ADJUST FOR LOCAL DEV if needed
         console.log("Loaded Firebase service account from local file.");
     }
 } catch (error) {
     console.error("FATAL ERROR: Could not load Firebase service account credentials.", error);
-    process.exit(1); // Exit if credentials can't be loaded
+    process.exit(1);
 }
 
 // Initialize Firebase Admin SDK
 try {
-    // Check if already initialized (useful for some environments/hot-reloading)
     if (admin.apps.length === 0) {
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount)
@@ -41,55 +39,63 @@ try {
     process.exit(1);
 }
 
-const db = admin.firestore(); // Get Firestore instance
+const db = admin.firestore();
 // --- End Firebase Initialization ---
 
 
 // --- Firestore Configuration for FINAL data ---
-const FINAL_DATA_COLLECTION = 'participants_finished'; // Or 'participants_final_data' - use the one you decided on
-const FINAL_DATA_SUBCOLLECTION = 'final_trials';   // Or 'trials' - use the one you decided on
+const FINAL_DATA_COLLECTION = 'participants_finished'; // Or 'participants_final_data'
+const FINAL_DATA_SUBCOLLECTION = 'final_trials';   // Or 'trials'
 
 // Initialize Express app
 const app = express();
 
 // --- Middleware ---
-app.use(cors()); // Enable CORS
-// *** CHANGED: Use express.json() to parse incoming JSON data from jsPsych ***
-app.use(express.json({ limit: '50mb' })); // Increase limit for large datasets
+app.use(cors()); // Enable CORS - Should be high up
 
-// --- Keep or Remove Old File Saving Logic ---
-/* // Commenting out the old file-based saving route
-const dataDir = path.join(__dirname, 'data');
-app.post('/submit', (req, res) => {
-  // This route expects plain text/CSV in req.body
-  // And uses req.query.subject_id which might not be sent by the new jsPsych code
-  const subjectId = req.query.subject_id || "unknown"; // Be careful with this
-  const filePath = path.join(dataDir, `subject-${subjectId}.csv`);
+// *** CHANGED: Use bodyParser.json() instead of express.json() ***
+app.use(bodyParser.json({ limit: '50mb' })); // Increase limit for large datasets
 
-  fs.mkdir(dataDir, { recursive: true }, (err) => {
-    if (err) {
-      console.error("Directory creation error:", err);
-      return res.status(500).send('Failed to create directory');
+// *** ADDED: Optional Raw Body Logger (for debugging if JSON error persists) ***
+/* // Uncomment this block temporarily if JSON errors continue, to see the raw body
+app.use((req, res, next) => {
+    if (req.originalUrl === '/save-final-data' && req.method === 'POST') {
+        let data = '';
+        req.setEncoding('utf8');
+        req.on('data', function(chunk) {
+           data += chunk;
+        });
+        req.on('end', function() {
+            console.log("------ RAW BODY RECEIVED (/save-final-data) ------");
+            console.log(data.substring(0, 500) + (data.length > 500 ? '...' : '')); // Log first 500 chars
+            console.log("------ END RAW BODY ------");
+            // We are NOT calling next() here in this temporary logger
+            // as body-parser needs the original stream.
+            // This is just for seeing what arrives if parsing fails.
+            // REMEMBER TO COMMENT THIS OUT AGAIN AFTER DEBUGGING.
+        });
     }
-    // req.body here would be the JSON string if sent to this endpoint now
-    // You might need JSON.stringify(req.body) if you adapt this
-    fs.appendFile(filePath, req.body + "\n", err => { // Appending JSON might be weird
-      if (err) {
-        console.error("Error appending data:", err);
-        return res.status(500).send('Failed to save data');
-      }
-      console.log("Data appended to", filePath);
-      res.status(200).send('Data received and appended (Legacy)');
-    });
-  });
+    // IMPORTANT: If using the raw body logger above, you might need to call next()
+    // if you intend for the actual route handler to still process the request,
+    // BUT body-parser might complain if the stream was already consumed.
+    // It's best used *instead* of body-parser temporarily for inspection.
+    next(); // Call next() if NOT using the temporary logger above
 });
 */
-// --- End Old File Saving Logic ---
 
+// --- Routes ---
 
 // --- ADDED: New Route for Saving Final Data to Firestore ---
 app.post('/save-final-data', async (req, res) => {
     console.log("Received request at /save-final-data");
+    // *** ADDED: Log to confirm body was parsed (or if it's empty) ***
+    console.log("Parsed req.body type:", typeof req.body);
+    if (typeof req.body === 'object' && req.body !== null) {
+        console.log("First few keys in req.body:", Object.keys(req.body).slice(0, 5));
+    } else {
+        console.log("req.body is not an object or is null.");
+    }
+    // *** End Added Log ***
 
     // 1. Extract data from request body
     const { participantId, allTrialData } = req.body; // Expecting JSON payload
@@ -118,20 +124,16 @@ app.post('/save-final-data', async (req, res) => {
                 continue;
             }
 
-            // Server-side cleaning is less critical if client cleans, but ensure subject_id
             const cleanedTrial = { ...rawTrial };
             if (!cleanedTrial.subject_id) {
                 cleanedTrial.subject_id = participantId;
             }
 
-            // Create ref for new doc in the FINAL subcollection
             const newFinalTrialDocRef = finalSubcollectionRef.doc();
-
             batch.set(newFinalTrialDocRef, cleanedTrial);
             operationCount++;
             trialsPreparedCount++;
 
-            // Commit batch if full
             if (operationCount >= maxBatchSize) {
                 console.log(`Committing FINAL batch ${batchesCommitted + 1} (size ${operationCount}) for ${participantId}...`);
                 await batch.commit();
@@ -141,7 +143,6 @@ app.post('/save-final-data', async (req, res) => {
             }
         } // End loop
 
-        // Commit remaining operations
         if (operationCount > 0) {
             console.log(`Committing FINAL batch ${batchesCommitted + 1} (size ${operationCount}) for ${participantId}...`);
             await batch.commit();
