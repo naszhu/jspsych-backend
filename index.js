@@ -14,7 +14,26 @@ const db = admin.firestore();
 
 // --- 2) Express setup with CORS and JSON parsing ---
 const app = express();
-app.use(cors({ origin: 'http://localhost:8080' }));
+
+const allowedOrigins = [
+  'http://localhost:8080',
+  'https://ctx-e3.web.app'
+];
+
+app.use(cors({
+  origin: (incomingOrigin, callback) => {
+    if (!incomingOrigin || allowedOrigins.includes(incomingOrigin)) {
+      // allow requests with no origin (e.g. curl, Postman)
+      return callback(null, true);
+    }
+    callback(new Error(`CORS blocked for origin ${incomingOrigin}`));
+  },
+  methods: ['GET','POST','OPTIONS'],
+  allowedHeaders: ['Content-Type']
+}));
+
+
+
 app.options('*', cors());
 app.use(express.json({ limit: '50mb' }));
 
