@@ -5,7 +5,7 @@ const fs      = require('fs');
 const path    = require('path');
 const admin   = require('firebase-admin');
 
-// --- 1) Initialize Firebase Admin SDK for Realtime Database ---
+// 1) Init Firebase Admin (Realtime Database)
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -13,105 +13,81 @@ admin.initializeApp({
 });
 const db = admin.database();
 
-// --- 2) Express setup with CORS and JSON parsing ---
+// 2) Express + CORS + JSON
 const app = express();
-// Enable CORS for all routes
 app.use(cors());
 app.options('*', cors());
-// Parse JSON bodies up to 50 MB
 app.use(express.json({ limit: '50mb' }));
 
-// === Endpoint: Save single trial ===
+// 3) Save single trial (unchanged)
 app.post('/save-trial-data', (req, res) => {
   const { participantId, trialData } = req.body;
   if (!participantId || !trialData) {
     return res.status(400).json({ error: 'Missing participantId or trialData' });
   }
 
-  // Stage 1: Save locally
+  // Local file backup
   const trialFolder = path.join(__dirname, 'data', 'trials', participantId);
   fs.mkdirSync(trialFolder, { recursive: true });
-  const trialFile = `trial_${Date.now()}.json`;
-  try {
-    fs.writeFileSync(
-      path.join(trialFolder, trialFile),
-      JSON.stringify(trialData),
-      'utf8'
-    );
-  } catch (e) {
-    console.error('Local trial write error:', e);
-    return res.status(500).json({ error: 'Failed to save trial locally' });
-  }
+  fs.writeFileSync(
+    path.join(trialFolder, `trial_${Date.now()}.json`),
+    JSON.stringify(trialData),
+    'utf8'
+  );
 
-  // Immediate response
   res.status(200).json({ message: 'Trial saved locally.' });
 
-  // Stage 2: Async write to RTDB
+  // Async: push to RTDB
   (async () => {
     try {
       const ref = db.ref(`participants/${participantId}/trials`).push();
       await ref.set(trialData);
-      console.log(`RTDB trial write complete for ${participantId}`);
     } catch (e) {
-      console.error(`RTDB trial write failed for ${participantId}:`, e);
+      console.error(`RTDB trial write failed:`, e);
     }
   })();
 });
 
-// === Endpoint: Save final data ===
+// 4) Save final data → write the entire array in one go
 app.post('/save-final-data', (req, res) => {
   const { participantId, allTrialData, saveDurationMs } = req.body;
   if (!participantId || !Array.isArray(allTrialData)) {
     return res.status(400).json({ error: 'Missing participantId or allTrialData' });
   }
 
-  // Stage 1: Save final payload locally
+  // Local file backup
   const finalFolder = path.join(__dirname, 'data', 'final', participantId);
   fs.mkdirSync(finalFolder, { recursive: true });
-  const finalFile = `final_${Date.now()}.json`;
-  try {
-    fs.writeFileSync(
-      path.join(finalFolder, finalFile),
-      JSON.stringify(allTrialData),
-      'utf8'
-    );
-  } catch (e) {
-    console.error('Local final write error:', e);
-    return res.status(500).json({ error: 'Failed to save final data locally' });
-  }
+  fs.writeFileSync(
+    path.join(finalFolder, `final_${Date.now()}.json`),
+    JSON.stringify(allTrialData),
+    'utf8'
+  );
 
-  // Immediate response
   res.status(200).json({ message: 'Final data saved locally.' });
 
-  // Stage 2: Async batch write trials to RTDB
+  // Async: single .set() of the whole array
   (async () => {
     try {
-      const baseRef = db.ref(`participants_finished/${participantId}/final_trials`);
-      for (const trial of allTrialData) {
-        const ref = baseRef.push();
-        await ref.set({ ...trial, timestamp: admin.database.ServerValue.TIMESTAMP });
-      }
-      console.log(`✅ All final trials written for ${participantId}`);
-    } catch (e) {
-      console.error(`RTDB final-trials write failed for ${participantId}:`, e);
-    }
-
-    // Stage 3: Async write summary metadata
-    try {
+      const trialsRef = db.ref(`participants_finished/${participantId}/all_trials`);
+      await trialsRef.set({
+        trials:   allTrialData,
+        saved_at: admin.database.ServerValue.TIMESTAMP
+      });
+      // summary metadata
       const summaryRef = db.ref(`participants_finished/${participantId}/summary`);
       await summaryRef.update({
-        subject_id: participantId,
-        final_save_status: 'completed',
-        final_save_timestamp: admin.database.ServerValue.TIMESTAMP,
+        subject_id:             participantId,
+        final_save_status:      'completed',
+        final_save_timestamp:   admin.database.ServerValue.TIMESTAMP,
         ...(typeof saveDurationMs === 'number' && { final_save_duration_ms: saveDurationMs })
       });
-      console.log(`RTDB summary write complete for ${participantId}`);
     } catch (e) {
-      console.error(`RTDB summary write failed for ${participantId}:`, e);
+      console.error(`RTDB final write failed:`, e);
     }
   })();
 });
 
-// === Start server ===
+// 5) Start server
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
