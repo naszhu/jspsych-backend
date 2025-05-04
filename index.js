@@ -5,37 +5,17 @@ const fs      = require('fs');
 const path    = require('path');
 const admin   = require('firebase-admin');
 
-// --- 1) Initialize Firebase Admin SDK ---
+// --- 1) Initialize Firebase Admin SDK for Realtime Database ---
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
+  // ◉◉◉ Replace <YOUR-PROJECT> with your actual project ID:
+  databaseURL: "https://ctx-e3-default-rtdb.firebaseio.com"
 });
-const db = admin.firestore();
+const db = admin.database();  // ← was admin.firestore()
 
 // --- 2) Express setup with CORS and JSON parsing ---
 const app = express();
-
-// const allowedOrigins = [
-//   'http://localhost:8080',
-//   'https://ctx-e3.web.app',
-//   'https://exp-host.pages.dev'    // ← add your Pages.dev origin here
-// ];
-
-// app.use(cors({
-//   origin: (incomingOrigin, callback) => {
-//     if (!incomingOrigin || allowedOrigins.includes(incomingOrigin)) {
-//       // allow requests with no origin (e.g. curl, Postman)
-//       return callback(null, true);
-//     }
-//     callback(new Error(`CORS blocked for origin ${incomingOrigin}`));
-//   },
-//   methods: ['GET','POST','OPTIONS'],
-//   allowedHeaders: ['Content-Type']
-// }));
-
-
-
-// app.options('*', cors());
 
 // Allow all origins
 app.use(cors());
@@ -68,17 +48,14 @@ app.post('/save-trial-data', (req, res) => {
   // Respond immediately
   res.status(200).json({ message: 'Trial saved locally.' });
 
-  // Stage 2: Async write to Firestore
+  // Stage 2: Async write to Realtime Database
   (async () => {
     try {
-      const colRef = db
-        .collection('participants')
-        .doc(participantId)
-        .collection('trials_backup');
-      await colRef.add(trialData);
-      console.log(`Firestore trial write complete for ${participantId}`);
+      const ref = db.ref(`participants/${participantId}/trials`).push();
+      await ref.set(trialData);
+      console.log(`RTDB trial write complete for ${participantId}`);
     } catch (e) {
-      console.error(`Firestore trial write failed for ${participantId}:`, e);
+      console.error(`RTDB trial write failed for ${participantId}:`, e);
     }
   })();
 });
@@ -108,51 +85,35 @@ app.post('/save-final-data', (req, res) => {
   // Respond immediately
   res.status(200).json({ message: 'Final data saved locally.' });
 
-  // Stage 2: Async batch write each trial into Firestore subcollection
+  // Stage 2: Async batch write each trial into RTDB under /participants_finished
   (async () => {
     try {
-      const BATCH_SIZE = 500;
-      for (let i = 0; i < allTrialData.length; i += BATCH_SIZE) {
-        const batch = db.batch();
-        const chunk = allTrialData.slice(i, i + BATCH_SIZE);
-        chunk.forEach(trial => {
-          const docRef = db
-            .collection('participants_finished')
-            .doc(participantId)
-            .collection('final_trials')
-            .doc();
-          batch.set(docRef, {
-            ...trial,
-            timestamp: admin.firestore.FieldValue.serverTimestamp()
-          });
+      const baseRef = db.ref(`participants_finished/${participantId}/final_trials`);
+      // RTDB has no batch, so we do individual pushes (you could optimize with multi-path updates)
+      for (const trial of allTrialData) {
+        const ref = baseRef.push();
+        await ref.set({
+          ...trial,
+          timestamp: admin.database.ServerValue.TIMESTAMP
         });
-        await batch.commit();
-        console.log(
-          `Firestore final batch ${i / BATCH_SIZE + 1} committed (${chunk.length} docs)`
-        );
       }
       console.log(`✅ All final trials written for ${participantId}`);
     } catch (e) {
-      console.error(`Firestore final-trials write failed for ${participantId}:`, e);
+      console.error(`RTDB final-trials write failed for ${participantId}:`, e);
     }
 
     // Stage 3: Async write summary metadata (merge)
     try {
-      const summaryRef = db
-        .collection('participants_finished')
-        .doc(participantId);
-      await summaryRef.set(
-        {
-          subject_id: participantId,
-          final_save_status: 'completed',
-          final_save_timestamp: admin.firestore.FieldValue.serverTimestamp(),
-          ...(typeof saveDurationMs === 'number' && { final_save_duration_ms: saveDurationMs })
-        },
-        { merge: true }
-      );
-      console.log(`Firestore summary write complete for ${participantId}`);
+      const summaryRef = db.ref(`participants_finished/${participantId}/summary`);
+      await summaryRef.update({
+        subject_id: participantId,
+        final_save_status: 'completed',
+        final_save_timestamp: admin.database.ServerValue.TIMESTAMP,
+        ...(typeof saveDurationMs === 'number' && { final_save_duration_ms: saveDurationMs })
+      });
+      console.log(`RTDB summary write complete for ${participantId}`);
     } catch (e) {
-      console.error(`Firestore summary write failed for ${participantId}:`, e);
+      console.error(`RTDB summary write failed for ${participantId}:`, e);
     }
   })();
 });
