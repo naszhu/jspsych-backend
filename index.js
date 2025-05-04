@@ -15,26 +15,32 @@ const db = admin.firestore();
 // --- 2) Express setup with CORS and JSON parsing ---
 const app = express();
 
-const allowedOrigins = [
-  'http://localhost:8080',
-  'https://ctx-e3.web.app'
-];
+// const allowedOrigins = [
+//   'http://localhost:8080',
+//   'https://ctx-e3.web.app',
+//   'https://exp-host.pages.dev'    // ← add your Pages.dev origin here
+// ];
 
-app.use(cors({
-  origin: (incomingOrigin, callback) => {
-    if (!incomingOrigin || allowedOrigins.includes(incomingOrigin)) {
-      // allow requests with no origin (e.g. curl, Postman)
-      return callback(null, true);
-    }
-    callback(new Error(`CORS blocked for origin ${incomingOrigin}`));
-  },
-  methods: ['GET','POST','OPTIONS'],
-  allowedHeaders: ['Content-Type']
-}));
+// app.use(cors({
+//   origin: (incomingOrigin, callback) => {
+//     if (!incomingOrigin || allowedOrigins.includes(incomingOrigin)) {
+//       // allow requests with no origin (e.g. curl, Postman)
+//       return callback(null, true);
+//     }
+//     callback(new Error(`CORS blocked for origin ${incomingOrigin}`));
+//   },
+//   methods: ['GET','POST','OPTIONS'],
+//   allowedHeaders: ['Content-Type']
+// }));
 
 
 
+// app.options('*', cors());
+
+// Allow all origins
+app.use(cors());
 app.options('*', cors());
+
 app.use(express.json({ limit: '50mb' }));
 
 // === Endpoint: Save single trial ===
