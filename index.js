@@ -9,18 +9,16 @@ const admin   = require('firebase-admin');
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  // ◉◉◉ Replace <YOUR-PROJECT> with your actual project ID:
   databaseURL: "https://ctx-e3-default-rtdb.firebaseio.com"
 });
-const db = admin.database();  // ← was admin.firestore()
+const db = admin.database();
 
 // --- 2) Express setup with CORS and JSON parsing ---
 const app = express();
-
-// Allow all origins
+// Enable CORS for all routes
 app.use(cors());
 app.options('*', cors());
-
+// Parse JSON bodies up to 50 MB
 app.use(express.json({ limit: '50mb' }));
 
 // === Endpoint: Save single trial ===
@@ -30,7 +28,7 @@ app.post('/save-trial-data', (req, res) => {
     return res.status(400).json({ error: 'Missing participantId or trialData' });
   }
 
-  // Stage 1: Write to local file (milliseconds)
+  // Stage 1: Save locally
   const trialFolder = path.join(__dirname, 'data', 'trials', participantId);
   fs.mkdirSync(trialFolder, { recursive: true });
   const trialFile = `trial_${Date.now()}.json`;
@@ -45,10 +43,10 @@ app.post('/save-trial-data', (req, res) => {
     return res.status(500).json({ error: 'Failed to save trial locally' });
   }
 
-  // Respond immediately
+  // Immediate response
   res.status(200).json({ message: 'Trial saved locally.' });
 
-  // Stage 2: Async write to Realtime Database
+  // Stage 2: Async write to RTDB
   (async () => {
     try {
       const ref = db.ref(`participants/${participantId}/trials`).push();
@@ -67,7 +65,7 @@ app.post('/save-final-data', (req, res) => {
     return res.status(400).json({ error: 'Missing participantId or allTrialData' });
   }
 
-  // Stage 1: Write final payload to local file
+  // Stage 1: Save final payload locally
   const finalFolder = path.join(__dirname, 'data', 'final', participantId);
   fs.mkdirSync(finalFolder, { recursive: true });
   const finalFile = `final_${Date.now()}.json`;
@@ -82,27 +80,23 @@ app.post('/save-final-data', (req, res) => {
     return res.status(500).json({ error: 'Failed to save final data locally' });
   }
 
-  // Respond immediately
+  // Immediate response
   res.status(200).json({ message: 'Final data saved locally.' });
 
-  // Stage 2: Async batch write each trial into RTDB under /participants_finished
+  // Stage 2: Async batch write trials to RTDB
   (async () => {
     try {
       const baseRef = db.ref(`participants_finished/${participantId}/final_trials`);
-      // RTDB has no batch, so we do individual pushes (you could optimize with multi-path updates)
       for (const trial of allTrialData) {
         const ref = baseRef.push();
-        await ref.set({
-          ...trial,
-          timestamp: admin.database.ServerValue.TIMESTAMP
-        });
+        await ref.set({ ...trial, timestamp: admin.database.ServerValue.TIMESTAMP });
       }
       console.log(`✅ All final trials written for ${participantId}`);
     } catch (e) {
       console.error(`RTDB final-trials write failed for ${participantId}:`, e);
     }
 
-    // Stage 3: Async write summary metadata (merge)
+    // Stage 3: Async write summary metadata
     try {
       const summaryRef = db.ref(`participants_finished/${participantId}/summary`);
       await summaryRef.update({
